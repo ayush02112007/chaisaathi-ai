@@ -16,6 +16,9 @@ venv/
 *.db
 *.sqlite3
 
+# Frontend build copied into backend for production serving
+backend/static/
+
 # OS / editor
 .DS_Store
 .vscode/

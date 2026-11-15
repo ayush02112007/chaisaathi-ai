@@ -1,23 +1,20 @@
+databases:
+  - name: chaisaathi-db
+    databaseName: chaisaathi
+    plan: free
+
 services:
   - type: web
-    name: chaisaathi-backend
+    name: chaisaathi-ai
     runtime: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: bash build.sh
+    startCommand: bash start.sh
     envVars:
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: chaisaathi-db
+          property: connectionString
       - key: ANTHROPIC_API_KEY
         sync: false
-
-  - type: web
-    name: chaisaathi-frontend
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+      - key: PYTHON_VERSION
+        value: "3.11.6"

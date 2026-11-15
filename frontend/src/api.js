@@ -1,10 +1,9 @@
 import axios from 'axios'
 
-// In dev, Vite proxy handles /api -> localhost:8000
-// In prod, use VITE_API_URL directly
-const baseURL = import.meta.env.PROD
-  ? import.meta.env.VITE_API_URL
-  : '/api'
+// Dev:  Vite proxy rewrites /api/* → localhost:8000/*
+// Prod: FastAPI serves the React build on the same origin,
+//       so API routes are relative (no /api prefix needed).
+const baseURL = import.meta.env.PROD ? '' : '/api'
 
 const api = axios.create({ baseURL })
 
