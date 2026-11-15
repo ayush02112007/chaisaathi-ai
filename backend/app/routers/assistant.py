@@ -58,9 +58,9 @@ Business Summary (as of {today}):
 @router.post("/chat")
 async def chat(msg: ChatMessage, db: Session = Depends(get_db)):
     api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not api_key or api_key == "your_key_here":
         return {
-            "response": "API key not set. Please add ANTHROPIC_API_KEY to .env file.",
+            "response": "AI assistant ke liye ANTHROPIC_API_KEY set nahi hai. Backend .env file mein apni key add karein. Baaki sabhi features (Dashboard, Udhaar, Inventory, Sales) bina key ke kaam karte hain! 🙏",
             "language": msg.language
         }
 
