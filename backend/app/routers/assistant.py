@@ -55,42 +55,95 @@ Business Summary (as of {today}):
 """
 
 
-def _friendly_error(e: Exception, language: str) -> str:
-    """Return a user-friendly error message without exposing internals or the key."""
-    err = str(e)
-    is_hindi = language == "hi"
+def _classify_error(e: Exception) -> tuple[str, str]:
+    """
+    Return (en_message, hi_message) for the given exception.
+    Uses isinstance checks (robust) before falling back to string matching.
+    Never exposes the API key or raw error internals.
+    """
+    try:
+        import anthropic as _sdk
 
-    if "401" in err or "authentication_error" in err or "invalid x-api-key" in err:
-        return (
-            "API key galat hai ya expire ho gaya hai. "
-            "Render dashboard mein ANTHROPIC_API_KEY dobara check karein. 🔑"
-            if is_hindi else
-            "The Anthropic API key is invalid or expired. "
-            "Please verify ANTHROPIC_API_KEY in the Render environment settings."
-        )
-    if "429" in err or "rate_limit" in err or "overloaded" in err:
-        return (
-            "Abhi bahut zyada requests aa rahi hain. Thodi der baad try karein. 🙏"
-            if is_hindi else
-            "Too many requests right now. Please try again in a moment."
-        )
-    if "404" in err or "not_found_error" in err:
-        return (
-            "AI model available nahi hai. Admin se contact karein. ⚙️"
-            if is_hindi else
-            "The AI model is unavailable. Please contact the admin."
-        )
-    if "timeout" in err.lower() or "connect" in err.lower():
-        return (
-            "Network error aaya. Internet connection check karein aur dobara try karein. 🌐"
-            if is_hindi else
-            "Network error. Please check your connection and try again."
-        )
-    # Generic — don't leak internal detail
+        # ── Authentication / credentials ──────────────────────────────────
+        if isinstance(e, (_sdk.AuthenticationError, _sdk.CredentialsError)):
+            return (
+                "The Anthropic API key is invalid or expired. "
+                "Please replace ANTHROPIC_API_KEY in Render Environment Variables.",
+                "API key galat hai ya expire ho gaya hai. "
+                "Render dashboard mein ANTHROPIC_API_KEY dobara update karein. 🔑"
+            )
+
+        # ── Account / billing issues ──────────────────────────────────────
+        if isinstance(e, _sdk.PermissionDeniedError):
+            return (
+                "API key does not have permission for this model or feature. "
+                "Check your Anthropic account plan at console.anthropic.com.",
+                "Is API key ko is model ka permission nahi hai. "
+                "console.anthropic.com par apna account check karein. 🔒"
+            )
+        if isinstance(e, (_sdk.OrganizationOnHoldError,
+                          _sdk.OrganizationTypeNotSupportedError)):
+            return (
+                "Your Anthropic account is on hold or pending verification. "
+                "Visit console.anthropic.com to complete account setup.",
+                "Aapka Anthropic account hold par hai. "
+                "console.anthropic.com par account setup poora karein. ⚠️"
+            )
+        if isinstance(e, _sdk.EnforcedSpendLimitReachedError):
+            return (
+                "API spend limit reached. Add credits at console.anthropic.com.",
+                "API credits khatam ho gaye hain. "
+                "console.anthropic.com par credits add karein. 💳"
+            )
+
+        # ── Rate limits ───────────────────────────────────────────────────
+        if isinstance(e, (_sdk.RateLimitError, _sdk.OverloadedError,
+                          _sdk.RampLimitExceededError)):
+            return (
+                "Too many requests right now. Please try again in a moment.",
+                "Abhi bahut zyada requests aa rahi hain. "
+                "Thodi der baad try karein. 🙏"
+            )
+
+        # ── Model / request errors ────────────────────────────────────────
+        if isinstance(e, _sdk.NotFoundError):
+            return (
+                "The AI model was not found. "
+                "Contact the admin to update the model name.",
+                "AI model nahi mila. Admin se model name update karne ko karein. 🔧"
+            )
+        if isinstance(e, _sdk.BadRequestError):
+            return (
+                "Invalid request sent to Anthropic API. "
+                "Check model name and request format.",
+                "Anthropic API par galat request gayi. "
+                "Model name aur request format check karein. ⚙️"
+            )
+
+        # ── Network / timeout ─────────────────────────────────────────────
+        if isinstance(e, (_sdk.APIConnectionError, _sdk.APITimeoutError,
+                          _sdk.RequestTimeoutError, _sdk.GatewayTimeoutError,
+                          _sdk.DeadlineExceededError)):
+            return (
+                "Network timeout. Please check connectivity and try again.",
+                "Network timeout aaya. "
+                "Internet connection check karein aur dobara try karein. 🌐"
+            )
+
+        # ── Server errors ─────────────────────────────────────────────────
+        if isinstance(e, _sdk.InternalServerError):
+            return (
+                "Anthropic servers are experiencing an issue. Try again shortly.",
+                "Anthropic servers mein problem hai. Thodi der baad try karein. 🛠️"
+            )
+
+    except ImportError:
+        pass
+
+    # Last-resort generic — still no key exposure
     return (
+        "A temporary error occurred. Please try again shortly.",
         "Kuch technical problem aayi. Thodi der baad dobara try karein. 🛠️"
-        if is_hindi else
-        "A technical error occurred. Please try again shortly."
     )
 
 
@@ -126,23 +179,77 @@ Current Business Data:
             system=system_prompt,
             messages=[{"role": "user", "content": msg.message}]
         )
-        return {
-            "response": response.content[0].text,
-            "language": msg.language
-        }
+        # Extract text safely — handle both TextBlock and plain string content
+        content = response.content[0]
+        text = content.text if hasattr(content, "text") else str(content)
+        return {"response": text, "language": msg.language}
+
     except Exception as e:
+        en_msg, hi_msg = _classify_error(e)
         return {
-            "response": _friendly_error(e, msg.language),
+            "response": hi_msg if msg.language == "hi" else en_msg,
             "language": msg.language
         }
 
 
 @router.get("/status")
 def assistant_status():
-    """Check if AI assistant is configured — does NOT reveal the key value."""
+    """Check configuration and diagnose last error — never reveals key value."""
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     configured = bool(api_key) and api_key != "your_key_here"
+
+    # Basic key format check (safe — just checks prefix/length, not value)
+    key_format_ok = None
+    if configured:
+        key_format_ok = api_key.startswith("sk-ant-") and len(api_key) > 40
+
     return {
         "configured": configured,
-        "hint": "Set ANTHROPIC_API_KEY in Render environment variables" if not configured else None
+        "key_format_valid": key_format_ok,
+        "hint": (
+            None if configured else
+            "Set ANTHROPIC_API_KEY in Render environment variables"
+        ),
+        "format_hint": (
+            None if key_format_ok else
+            "Key should start with 'sk-ant-' and be longer than 40 chars"
+        ) if configured else None
     }
+
+
+@router.get("/debug-error")
+async def debug_error(db: Session = Depends(get_db)):
+    """
+    Makes a real API call and returns only the exception class name —
+    never the message (which could contain account details).
+    Use this to diagnose production errors without exposing secrets.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key or api_key == "your_key_here":
+        return {"error_class": None, "configured": False}
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=5,
+            messages=[{"role": "user", "content": "hi"}]
+        )
+        content = response.content[0]
+        text = content.text if hasattr(content, "text") else str(content)
+        return {
+            "error_class": None,
+            "success": True,
+            "response_preview": text[:30],
+            "model": response.model,
+            "stop_reason": response.stop_reason
+        }
+    except Exception as e:
+        return {
+            "error_class": type(e).__name__,
+            "error_module": type(e).__module__,
+            "success": False,
+            # status_code if present — safe, it's just an HTTP status number
+            "status_code": getattr(e, "status_code", None)
+        }
