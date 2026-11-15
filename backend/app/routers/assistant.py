@@ -55,12 +55,55 @@ Business Summary (as of {today}):
 """
 
 
+def _friendly_error(e: Exception, language: str) -> str:
+    """Return a user-friendly error message without exposing internals or the key."""
+    err = str(e)
+    is_hindi = language == "hi"
+
+    if "401" in err or "authentication_error" in err or "invalid x-api-key" in err:
+        return (
+            "API key galat hai ya expire ho gaya hai. "
+            "Render dashboard mein ANTHROPIC_API_KEY dobara check karein. 🔑"
+            if is_hindi else
+            "The Anthropic API key is invalid or expired. "
+            "Please verify ANTHROPIC_API_KEY in the Render environment settings."
+        )
+    if "429" in err or "rate_limit" in err or "overloaded" in err:
+        return (
+            "Abhi bahut zyada requests aa rahi hain. Thodi der baad try karein. 🙏"
+            if is_hindi else
+            "Too many requests right now. Please try again in a moment."
+        )
+    if "404" in err or "not_found_error" in err:
+        return (
+            "AI model available nahi hai. Admin se contact karein. ⚙️"
+            if is_hindi else
+            "The AI model is unavailable. Please contact the admin."
+        )
+    if "timeout" in err.lower() or "connect" in err.lower():
+        return (
+            "Network error aaya. Internet connection check karein aur dobara try karein. 🌐"
+            if is_hindi else
+            "Network error. Please check your connection and try again."
+        )
+    # Generic — don't leak internal detail
+    return (
+        "Kuch technical problem aayi. Thodi der baad dobara try karein. 🛠️"
+        if is_hindi else
+        "A technical error occurred. Please try again shortly."
+    )
+
+
 @router.post("/chat")
 async def chat(msg: ChatMessage, db: Session = Depends(get_db)):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key or api_key == "your_key_here":
         return {
-            "response": "AI assistant ke liye ANTHROPIC_API_KEY set nahi hai. Backend .env file mein apni key add karein. Baaki sabhi features (Dashboard, Udhaar, Inventory, Sales) bina key ke kaam karte hain! 🙏",
+            "response": (
+                "AI assistant ke liye ANTHROPIC_API_KEY set nahi hai. "
+                "Render dashboard → Environment mein key add karein. "
+                "Baaki sabhi features bina key ke kaam karte hain! 🙏"
+            ),
             "language": msg.language
         }
 
@@ -70,9 +113,9 @@ async def chat(msg: ChatMessage, db: Session = Depends(get_db)):
         context = get_business_context(db)
 
         system_prompt = f"""You are ChaiSaathi AI, a helpful business assistant for small Indian shop owners (dukandars).
-You speak fluently in both Hindi and English. If the user writes in Hindi, respond in Hindi. If in English, respond in English.
+You speak fluently in both Hindi and English. If the user writes in Hindi or Hinglish, respond in Hindi. If in English, respond in English.
 You help with udhaar (credit) management, inventory, sales tracking, and business advice.
-Keep responses concise and practical.
+Keep responses concise (2-4 sentences) and practical. Use ₹ for currency.
 
 Current Business Data:
 {context}"""
@@ -89,6 +132,17 @@ Current Business Data:
         }
     except Exception as e:
         return {
-            "response": f"Error: {str(e)}",
+            "response": _friendly_error(e, msg.language),
             "language": msg.language
         }
+
+
+@router.get("/status")
+def assistant_status():
+    """Check if AI assistant is configured — does NOT reveal the key value."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    configured = bool(api_key) and api_key != "your_key_here"
+    return {
+        "configured": configured,
+        "hint": "Set ANTHROPIC_API_KEY in Render environment variables" if not configured else None
+    }
