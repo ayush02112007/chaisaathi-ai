@@ -177,7 +177,7 @@ Current Business Data:
             model="claude-haiku-4-5-20251001",
             max_tokens=500,
             system=system_prompt,
-            messages=[{"role": "user", "content": msg.message}]
+            messages=[{"role": "user", "content": [{"type": "text", "text": msg.message}]}]
         )
         # Extract text safely — handle both TextBlock and plain string content
         content = response.content[0]
@@ -234,7 +234,7 @@ async def debug_error(db: Session = Depends(get_db)):
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=5,
-            messages=[{"role": "user", "content": "hi"}]
+            messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
         )
         content = response.content[0]
         text = content.text if hasattr(content, "text") else str(content)
